@@ -1,0 +1,8 @@
+# Apache: keep the database and internals private
+Options -Indexes
+<FilesMatch "\.(sqlite|sqlite-wal|sqlite-shm|md|sh|log|pid)$">
+    Require all denied
+</FilesMatch>
+<FilesMatch "^(config|questions|router)\.php$">
+    Require all denied
+</FilesMatch>
