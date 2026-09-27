@@ -104,8 +104,25 @@ try {
                 if (row('SELECT 1 FROM answers WHERE game = ? AND question = ?', [$s['game'], $qid])) {
                     fail('That heart is already open.');
                 }
-                q("UPDATE state SET phase = 'answer', question = ?, choice = NULL WHERE id = 1", [$qid]);
-                add_message((int) $s['game'], $me, 'question', $qid, question($qid)['q']);
+                q("UPDATE state SET phase = 'answer', question = ?, choice = NULL, tod = NULL WHERE id = 1", [$qid]);
+                $pq = public_question($qid);
+                add_message((int) $s['game'], $me, 'question', $qid, $pq['type'] === 'tod' ? '🎭 Truth or Dare?' : $pq['text']);
+                bump();
+            });
+            out_state();
+        }
+
+        case 'tod': {
+            // The picker of a Truth-or-Dare heart decides which one they get.
+            tx(function () use ($me, $in) {
+                $s = state_row();
+                if ($s['status'] !== 'playing' || $s['phase'] !== 'answer' || $s['turn'] !== $me) fail("It's not your question.");
+                $qid = (int) $s['question'];
+                if (public_question($qid)['type'] !== 'tod') fail('This heart is not Truth or Dare.');
+                if ($s['tod'] !== null) fail('You already chose ' . $s['tod'] . '.');
+                $pick = ($in['pick'] ?? '') === 'dare' ? 'dare' : 'truth';
+                q('UPDATE state SET tod = ?, choice = NULL WHERE id = 1', [$pick]);
+                add_message((int) $s['game'], $me, $pick, $qid, public_question($qid, $pick)['text']);
                 bump();
             });
             out_state();
@@ -115,7 +132,8 @@ try {
             tx(function () use ($me, $in) {
                 $s = state_row();
                 if ($s['status'] !== 'playing' || $s['phase'] !== 'answer' || $s['turn'] !== $me) fail("It's not your question.");
-                $pq = public_question((int) $s['question']);
+                $pq = public_question((int) $s['question'], $s['tod']);
+                if ($pq['type'] === 'tod') fail('Choose Truth or Dare first 🎭');
                 if ($pq['type'] !== 'choice') fail('Answer this one in the chat 💬');
                 $choice = (int) ($in['choice'] ?? -1);
                 if (!isset($pq['options'][$choice]) && $choice !== custom_index($pq)) fail('Pick one of the options.');
@@ -131,10 +149,14 @@ try {
                 if ($s['status'] !== 'playing' || $s['phase'] !== 'answer' || $s['turn'] !== $me) fail("It's not your question.");
                 $game = (int) $s['game'];
                 $qid = (int) $s['question'];
-                $pq = public_question($qid);
+                $pq = public_question($qid, $s['tod']);
                 $custom = null;
 
-                if ($pq['type'] === 'choice') {
+                if ($pq['type'] === 'tod') fail('Choose Truth or Dare first 🎭');
+                if ($pq['type'] === 'dare') {
+                    // a dare just needs to be done — messages/proof in the chat are optional
+                    add_message($game, $me, 'system', $qid, '🔥 ' . player_name($me) . ' completed the dare on heart #' . $qid . '!');
+                } elseif ($pq['type'] === 'choice') {
                     if ($s['choice'] === null) fail('Choose an answer first.');
                     if ((int) $s['choice'] === custom_index($pq)) {
                         $custom = trim(str_replace("\r\n", "\n", (string) ($in['text'] ?? '')));
@@ -150,17 +172,17 @@ try {
                     if (!$written) fail('Write your answer in the chat first 💬');
                 }
                 q(
-                    'INSERT INTO answers (game, question, player, choice, custom, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-                    [$game, $qid, $me, $s['choice'], $custom, time()]
+                    'INSERT INTO answers (game, question, player, choice, custom, tod, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                    [$game, $qid, $me, $s['choice'], $custom, $s['tod'], time()]
                 );
 
                 $opened = (int) row('SELECT COUNT(*) AS n FROM answers WHERE game = ?', [$game])['n'];
                 if ($opened >= count(questions())) {
-                    q("UPDATE state SET status = 'done', turn = NULL, phase = NULL, question = NULL, choice = NULL WHERE id = 1");
+                    q("UPDATE state SET status = 'done', turn = NULL, phase = NULL, question = NULL, choice = NULL, tod = NULL WHERE id = 1");
                     add_message($game, null, 'system', null, '💞 All hearts are open. What a journey!');
                 } else {
                     q(
-                        "UPDATE state SET turn = ?, phase = 'pick', question = NULL, choice = NULL WHERE id = 1",
+                        "UPDATE state SET turn = ?, phase = 'pick', question = NULL, choice = NULL, tod = NULL WHERE id = 1",
                         [other_player($me)]
                     );
                 }
@@ -178,7 +200,8 @@ try {
                 $kind = 'text';
                 $qid = null;
                 if ($s['status'] === 'playing' && $s['phase'] === 'answer' && $s['question']) {
-                    if (public_question((int) $s['question'])['type'] === 'open') {
+                    // write-it answers and dares happen in the chat
+                    if (in_array(public_question((int) $s['question'], $s['tod'])['type'], ['open', 'dare'], true)) {
                         $qid = (int) $s['question'];
                         $kind = $s['turn'] === $me ? 'answer' : 'text';
                     }
@@ -224,7 +247,7 @@ try {
 
                 q(
                     "UPDATE state SET game = game + 1, status = 'lobby', turn = NULL, phase = NULL, question = NULL,
-                     choice = NULL, roll = NULL, deck = ?, deck_mode = ? WHERE id = 1",
+                     choice = NULL, tod = NULL, roll = NULL, deck = ?, deck_mode = ? WHERE id = 1",
                     [$deck === null ? null : json_encode($deck, JSON_UNESCAPED_UNICODE), $mode]
                 );
                 $s = state_row();
@@ -288,7 +311,7 @@ try {
             $s = state_row();
             $qid = (int) ($_GET['q'] ?? 0);
             if (!question($qid)) fail('That heart does not exist.');
-            $ans = row('SELECT player, choice, custom FROM answers WHERE game = ? AND question = ?', [$s['game'], $qid]);
+            $ans = row('SELECT player, choice, custom, tod FROM answers WHERE game = ? AND question = ?', [$s['game'], $qid]);
             $isCurrent = $s['phase'] === 'answer' && (int) $s['question'] === $qid;
             if (!$ans && !$isCurrent) fail('This heart is still closed 🔒');
             $thread = q(
@@ -296,7 +319,7 @@ try {
                 [$s['game'], $qid]
             )->fetchAll();
             out([
-                'question' => public_question($qid),
+                'question' => public_question($qid, $ans ? $ans['tod'] : $s['tod']),
                 'by'       => $ans['player'] ?? $s['turn'],
                 'choice'   => $ans ? ($ans['choice'] === null ? null : (int) $ans['choice']) : null,
                 'custom'   => $ans['custom'] ?? null,

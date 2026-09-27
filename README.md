@@ -15,6 +15,7 @@ Edit `questions.php` to change the 100 questions. There are two question types:
 
 - `choice`: multiple choice. The answer is picked from options. A **Custom** option is added automatically as the last choice, so you can write your own answer instead.
 - `open`: a write-it question. The game moves to the chat, where the question is pinned, and the answer is typed there.
+- **Truth or Dare** (20 of the 100 hearts, listed in `$truthOrDare` in `questions.php`): whoever opens one chooses **Truth** (a question, either multiple choice or write-it) or **Dare** (something to do). A dare is pinned in the chat and finished with **I did it 🔥**. `$truthOrDareHearts` sets which heart numbers hide them.
 
 ## 2. Requirements
 

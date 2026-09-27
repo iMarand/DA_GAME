@@ -51,13 +51,7 @@
 html, body { height: 100%; margin: 0; }
 
 body {
-    background:
-        radial-gradient(900px 520px at 0% -10%, rgba(255, 77, 126, .20), transparent 60%),
-        radial-gradient(800px 480px at 110% 0%, rgba(150, 90, 255, .16), transparent 60%),
-        radial-gradient(700px 500px at 50% 120%, rgba(255, 150, 90, .10), transparent 60%),
-        linear-gradient(180deg, var(--bg-2), var(--bg));
     background-color: var(--bg);
-    background-attachment: fixed;
     color: var(--text);
     font-family: var(--font);
     font-size: 16px;
@@ -65,6 +59,18 @@ body {
     -webkit-font-smoothing: antialiased;
     -webkit-tap-highlight-color: transparent;
     overscroll-behavior: none;
+}
+
+/* The glowing backdrop sits on its own fixed layer: painted once, never repainted while scrolling
+   (background-attachment: fixed repaints the whole page on every scroll frame on phones). */
+body::before {
+    content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+    background:
+        radial-gradient(900px 520px at 0% -10%, rgba(255, 77, 126, .20), transparent 60%),
+        radial-gradient(800px 480px at 110% 0%, rgba(150, 90, 255, .16), transparent 60%),
+        radial-gradient(700px 500px at 50% 120%, rgba(255, 150, 90, .10), transparent 60%),
+        linear-gradient(180deg, var(--bg-2), var(--bg));
+    transform: translateZ(0);
 }
 
 button { font: inherit; color: inherit; }
@@ -177,7 +183,7 @@ input:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
     padding: calc(10px + var(--safe-t)) var(--gutter) 10px;
 }
 .brand { flex: none; width: 34px; height: 34px; }
-.brand-heart { width: 100%; height: 100%; fill: url(#gHeart); filter: drop-shadow(0 4px 10px rgba(255, 60, 110, .45)); animation: beat 2.4s ease-in-out infinite; }
+.brand-heart { width: 100%; height: 100%; fill: url(#gHeart); animation: beat 2.4s ease-in-out infinite; will-change: transform; }
 
 .couple { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; gap: 6px; }
 .couple-link { color: var(--rose); font-size: 14px; opacity: .8; flex: none; }
@@ -244,8 +250,7 @@ input:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
     flex: none;
     display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
     padding: 8px var(--gutter) calc(8px + var(--safe-b));
-    background: rgba(20, 8, 17, .82);
-    backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+    background: #170a14; /* solid: a blurred backdrop is re-computed on every scroll frame */
     border-top: 1px solid var(--border);
 }
 .tab {
@@ -276,8 +281,7 @@ input:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 .game-top {
     position: sticky; top: 0; z-index: 3;
     margin: 0 calc(var(--gutter) * -1); padding: 4px var(--gutter) 12px;
-    background: linear-gradient(180deg, rgba(24, 10, 21, .96) 70%, rgba(24, 10, 21, 0));
-    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    background: linear-gradient(180deg, #1a0b17 72%, rgba(26, 11, 23, 0));
 }
 
 .status {
@@ -350,20 +354,21 @@ input:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
     padding-top: 2px;
 }
 
+/* Performance: 100 hearts → no filters, no endless animations on the grid.
+   Depth comes from a cheap solid "shade" copy instead of a blurred drop-shadow. */
 .heart {
     position: relative;
     aspect-ratio: 1 / 1;
     border: 0; padding: 0; margin: 0;
     background: none; cursor: pointer;
-    transition: transform .2s var(--ease), opacity .3s, filter .3s;
+    transition: transform .2s var(--ease), opacity .3s;
     touch-action: manipulation;
+    contain: layout style;
 }
 .heart svg { width: 100%; height: 100%; display: block; overflow: visible; }
-.heart .shape {
-    fill: url(#gHeart);
-    filter: drop-shadow(0 5px 10px rgba(255, 50, 105, .35));
-    transition: fill .3s, filter .3s;
-}
+.heart .shade { fill: #8a0f38; opacity: .6; transform: translateY(1.4px); }
+.heart .shape { fill: url(#gHeart); transition: fill .3s; }
+.heart.open .shade { display: none; }
 .heart .shine { fill: #fff; opacity: .32; pointer-events: none; }
 .heart .num {
     position: absolute; inset: 0;
@@ -389,20 +394,29 @@ input:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 .heart.open .by { display: grid; }
 
 /* heart currently being answered */
-.heart.active .shape { fill: url(#gGold); filter: drop-shadow(0 0 12px rgba(255, 201, 120, .8)); }
+.heart.active .shape { fill: url(#gGold); }
+.heart.active .shade { fill: #b8520f; }
 .heart.active .num { color: #5a2a06; text-shadow: none; }
-.heart.active { animation: beat 1.3s ease-in-out infinite; z-index: 1; }
+.heart.active { animation: beat 1.3s ease-in-out infinite; z-index: 1; will-change: transform; }
+/* soft glow behind the open heart: only opacity/transform animate, so the GPU does it */
+.heart.active::before {
+    content: ''; position: absolute; inset: -22%; z-index: -1; border-radius: 50%; pointer-events: none;
+    background: radial-gradient(circle, rgba(255, 201, 120, .6), rgba(255, 201, 120, 0) 65%);
+    animation: glow 1.3s ease-in-out infinite alternate;
+}
 
 /* not your turn */
-.hearts.locked .heart:not(.open):not(.active) { opacity: .5; filter: saturate(.55); }
+.hearts.locked .heart:not(.open):not(.active) { opacity: .45; }
 
-/* your turn: hearts breathe */
-.hearts.pickable .heart:not(.open) { animation: breathe 3s ease-in-out infinite; animation-delay: calc(var(--i) * -71ms); }
+/* your turn: one gentle wave across the hearts (runs once, not forever) */
+.hearts.pickable .heart:not(.open) { animation: wave .7s var(--ease) backwards; animation-delay: calc(var(--i) * 6ms); }
 .heart:active { transform: scale(.9); }
 @media (hover: hover) {
-    .hearts.pickable .heart:not(.open):hover { transform: scale(1.1); animation-play-state: paused; }
+    .hearts.pickable .heart:not(.open):hover { transform: scale(1.1); }
     .heart.open:hover { transform: scale(1.06); }
 }
+@keyframes wave { 0% { transform: scale(.85); opacity: .4; } 45% { transform: scale(1.1); opacity: 1; } 100% { transform: scale(1); } }
+@keyframes glow { from { opacity: .45; transform: scale(.9); } to { opacity: 1; transform: scale(1.08); } }
 .heart.opening { animation: opening .5s var(--ease) forwards !important; }
 
 .hint { text-align: center; color: var(--faint); font-size: 12.5px; margin: 18px 0 0; }
@@ -497,6 +511,41 @@ input:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
     color: var(--pc); font-size: 12.5px; font-weight: 800;
 }
 .pinned .q-author { margin: 10px 0 0; }
+
+/* ---------- truth or dare ---------- */
+
+.tod-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.tod-card {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+    min-height: 150px; padding: 18px 12px;
+    border-radius: 22px; border: 1.5px solid var(--border-2); cursor: pointer;
+    text-align: center; color: var(--text);
+    transition: transform .15s var(--ease), border-color .2s, box-shadow .2s, opacity .2s;
+}
+.tod-card.truth { background: linear-gradient(160deg, rgba(127, 180, 255, .22), rgba(127, 180, 255, .05)); }
+.tod-card.dare { background: linear-gradient(160deg, rgba(255, 110, 60, .28), rgba(255, 60, 110, .08)); }
+.tod-card:not(:disabled):active { transform: scale(.96); }
+.tod-card:disabled { cursor: default; }
+.tod-card.picked { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(255, 201, 120, .25); }
+.tod-emoji { font-size: 44px; line-height: 1; margin-bottom: 6px; }
+.tod-card b { font-family: var(--serif); font-size: 24px; font-weight: 600; }
+.tod-card small { font-size: 12.5px; color: var(--muted); }
+@media (hover: hover) {
+    .tod-card:not(:disabled):hover { transform: translateY(-3px); border-color: var(--gold); }
+}
+
+.pinned.dare {
+    background: linear-gradient(135deg, rgba(255, 110, 60, .22), rgba(255, 60, 110, .12));
+    border-color: rgba(255, 140, 80, .6);
+}
+.pinned.dare .pinned-top { color: #ffb070; }
+
+.qcard.tod.truth { background: linear-gradient(180deg, rgba(127, 180, 255, .14), rgba(127, 180, 255, .04)); border-color: rgba(127, 180, 255, .35); }
+.qcard.tod.dare { background: linear-gradient(180deg, rgba(255, 110, 60, .16), rgba(255, 110, 60, .04)); border-color: rgba(255, 140, 80, .4); }
+.qcard.tod .qcard-top b { color: var(--gold); }
+
+/* first paint of a long chat: skip the per-message entrance animation */
+.messages.no-anim > * { animation: none !important; }
 
 /* ---------- chat pane ---------- */
 
@@ -634,8 +683,7 @@ input:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 
 .scrim {
     position: fixed; inset: 0; z-index: 40;
-    background: rgba(8, 2, 6, .6);
-    backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+    background: rgba(8, 2, 6, .7);
     opacity: 0; pointer-events: none; transition: opacity .3s;
 }
 .scrim.open { opacity: 1; pointer-events: auto; }
@@ -784,7 +832,6 @@ input:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
     border-radius: 18px;
     background: rgba(44, 18, 39, .96); border: 1px solid var(--border-2);
     box-shadow: var(--shadow);
-    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
     font-weight: 700; font-size: 14.5px;
     pointer-events: auto;
     animation: toastIn .35s var(--ease);

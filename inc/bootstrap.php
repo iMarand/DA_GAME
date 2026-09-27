@@ -43,12 +43,15 @@ function builtin_questions(): array
 {
     static $all = null;
     if ($all === null) {
-        $all = array_map(fn($q) => [
+        $plain = fn($q) => [
             'type'    => ($q['type'] ?? '') === 'choice' ? 'choice' : 'open',
             'q'       => (string) $q['q'],
             'options' => array_values($q['options'] ?? []),
-            'author'  => null,
-        ], array_values(require __DIR__ . '/../questions.php'));
+        ];
+        $all = array_map(fn($q) => ($q['type'] ?? '') === 'tod'
+            ? ['type' => 'tod', 'q' => 'Truth or Dare?', 'options' => [], 'truth' => $plain($q['truth']), 'dare' => (string) $q['dare'], 'author' => null]
+            : $plain($q) + ['author' => null],
+            array_values(require __DIR__ . '/../questions.php'));
     }
     return $all;
 }
@@ -98,16 +101,30 @@ function custom_index(array $publicQuestion): int
     return count($publicQuestion['options']);
 }
 
-function public_question(int $id): array
+/**
+ * What the players see for heart #id.
+ * A Truth-or-Dare heart shows as type 'tod' until the picker chooses; after that it becomes
+ * its truth question ('choice' or 'open') or its dare (type 'dare'), with 'tod' saying which.
+ */
+function public_question(int $id, ?string $tod = null): array
 {
     $q = question($id);
+    $out = ['id' => $id, 'type' => 'open', 'text' => '', 'options' => [], 'author' => $q['author'] ?? null, 'tod' => null];
+
+    if (($q['type'] ?? '') === 'tod') {
+        if ($tod === 'truth') {
+            return ['type' => $q['truth']['type'], 'text' => $q['truth']['q'], 'options' => array_values($q['truth']['options']), 'tod' => 'truth'] + $out;
+        }
+        if ($tod === 'dare') {
+            return ['type' => 'dare', 'text' => $q['dare'], 'tod' => 'dare'] + $out;
+        }
+        return ['type' => 'tod', 'text' => 'Truth or Dare?'] + $out;
+    }
     return [
-        'id'      => $id,
         'type'    => $q['type'] === 'choice' ? 'choice' : 'open',
         'text'    => $q['q'],
         'options' => array_values($q['options'] ?? []),
-        'author'  => $q['author'] ?? null,
-    ];
+    ] + $out;
 }
 
 /* ---------- auth (signed cookie, no accounts) ---------- */
@@ -235,6 +252,8 @@ function db(): PDO
     $addColumn('answers', 'custom', 'TEXT');
     $addColumn('state', 'deck', 'TEXT');
     $addColumn('state', 'deck_mode', "TEXT NOT NULL DEFAULT 'classic'");
+    $addColumn('state', 'tod', 'TEXT');   // 'truth' | 'dare' once a Truth-or-Dare heart is decided
+    $addColumn('answers', 'tod', 'TEXT');
     return $pdo;
 }
 
@@ -318,20 +337,20 @@ function build_state(?array $s = null): array
     $answered = q('SELECT question, player FROM answers WHERE game = ? ORDER BY created_at, question', [$s['game']])->fetchAll();
     // The most recent answer, so the other player can always see what was chosen
     // (even if they never caught the pick live between two polls).
-    $last = row('SELECT question, player, choice, custom FROM answers WHERE game = ? ORDER BY rowid DESC LIMIT 1', [$s['game']]);
+    $last = row('SELECT question, player, choice, custom, tod FROM answers WHERE game = ? ORDER BY rowid DESC LIMIT 1', [$s['game']]);
     return [
         'game'     => (int) $s['game'],
         'status'   => $s['status'],
         'turn'     => $s['turn'],
         'phase'    => $s['phase'],
-        'question' => $s['question'] ? public_question((int) $s['question']) : null,
+        'question' => $s['question'] ? public_question((int) $s['question'], $s['tod'] ?? null) : null,
         'choice'   => $s['choice'] === null ? null : (int) $s['choice'],
         'roll'     => $s['roll'] ? json_decode($s['roll'], true) : null,
         'answered' => array_map(fn($r) => ['q' => (int) $r['question'], 'by' => $r['player']], $answered),
         'total'    => count(questions()),
         'deck'     => $s['deck_mode'] ?? 'classic',
         'last'     => $last ? [
-            'q'      => public_question((int) $last['question']),
+            'q'      => public_question((int) $last['question'], $last['tod']),
             'by'     => $last['player'],
             'choice' => $last['choice'] === null ? null : (int) $last['choice'],
             'custom' => $last['custom'],

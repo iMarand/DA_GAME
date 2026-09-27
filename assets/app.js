@@ -35,10 +35,14 @@
         const svg = document.createElementNS(SVGNS, 'svg');
         svg.setAttribute('viewBox', '0 0 24 24');
         svg.setAttribute('aria-hidden', 'true');
-        const use = document.createElementNS(SVGNS, 'use');
-        use.setAttribute('href', '#heart-shape');
-        use.setAttribute('class', 'shape');
-        svg.append(use);
+        const layer = (cls) => {
+            const use = document.createElementNS(SVGNS, 'use');
+            use.setAttribute('href', '#heart-shape');
+            use.setAttribute('class', cls);
+            svg.append(use);
+        };
+        if (withShine) layer('shade'); // solid offset copy = cheap shadow (no blur filter)
+        layer('shape');
         if (withShine) {
             const e = document.createElementNS(SVGNS, 'ellipse');
             e.setAttribute('class', 'shine');
@@ -189,8 +193,8 @@
 
         if (!prev) {
             if (cur.roll) showDice(cur.roll);
-            if (curQ && cur.question.type === 'choice') openQuestionSheet(liveModel());
-            if (curQ && cur.question.type === 'open' && !isDesktop()) setTab('chat');
+            if (curQ && inSheet(cur.question)) openQuestionSheet(liveModel());
+            if (curQ && inChat(cur.question) && !isDesktop()) setTab('chat');
             return;
         }
 
@@ -203,19 +207,26 @@
 
         const prevQ = prev.question ? prev.question.id : null;
 
-        // A heart was opened
-        if (curQ && curQ !== prevQ) {
+        // A heart was opened — or a Truth-or-Dare heart just became its truth / dare
+        const decided = !!curQ && curQ === prevQ && prev.question.tod !== cur.question.tod;
+        if (curQ && (curQ !== prevQ || decided)) {
             const mine = cur.turn === ME;
+            const q = cur.question;
             if (!mine) {
-                notify(`${P[THEM].name} opened heart #${curQ} 💗`, 'open');
+                const chose = q.tod === 'dare' ? 'DARE 🔥' : 'TRUTH 🙊';
+                if (decided) notify(`${P[THEM].name} chose ${chose}`, 'open');
+                // (if they chose within a second we never saw the undecided heart)
+                else if (q.tod) notify(`${P[THEM].name} opened Truth or Dare #${curQ} and chose ${chose}`, 'open');
+                else notify(q.type === 'tod' ? `${P[THEM].name} found a Truth or Dare heart 🎭` : `${P[THEM].name} opened heart #${curQ} 💗`, 'open');
             }
-            if (cur.question.type === 'choice') {
+            if (inSheet(q)) {
                 openQuestionSheet(liveModel());
             } else {
                 closeSheets();
                 setTab('chat');
                 if (mine) setTimeout(() => el.input.focus(), 350);
-                else toast(`#${curQ} is a write-it question — answer is coming in the chat 💬`, 'love');
+                else if (q.type === 'dare') toast(`Watch ${P[THEM].name} do the dare in the chat 👀`, 'love');
+                else toast(`#${curQ} is a write-it question — the answer is coming in the chat 💬`, 'love');
             }
         }
 
@@ -237,6 +248,9 @@
                 burst();
             } else if (a.q.type === 'choice') {
                 openQuestionSheet({ q: a.q, by: a.by, choice: a.choice, mode: 'final' });
+                burst();
+            } else if (a.q.type === 'dare') {
+                toast(`${P[a.by].name} did the dare on #${a.q.id} 🔥`, 'love');
                 burst();
             } else {
                 toast(`${P[a.by].name} finished heart #${a.q.id} 💗`, 'love');
@@ -268,6 +282,11 @@
     }
 
     const liveModel = () => ({ q: S.question, by: S.turn, choice: S.choice, mode: 'live' });
+    // Where a question is answered: multiple choice and the Truth-or-Dare pick use the sheet,
+    // write-it questions and dares use the chat.
+    const inSheet = (q) => q.type === 'choice' || q.type === 'tod';
+    const inChat = (q) => q.type === 'open' || q.type === 'dare';
+    const todLabel = (q) => (q.tod === 'truth' ? '🙊 Truth' : q.tod === 'dare' ? '🔥 Dare' : q.type === 'tod' ? '🎭 Truth or Dare' : null);
 
     /* ---------- render ---------- */
 
@@ -299,7 +318,12 @@
         el.couple.replaceChildren(chip(ids[0], false), h('span', { class: 'couple-link', text: '♥' }), chip(ids[1], true));
     }
 
+    // Runs every poll (once a second) — skip all DOM writes when nothing visible changed.
+    let presenceKey = '';
     function renderPresence() {
+        const key = JSON.stringify([presence, S && S.status, S && S.turn]);
+        if (key === presenceKey) return;
+        presenceKey = key;
         for (const pid of Object.keys(P)) {
             const chip = document.getElementById(`chip-${pid}`);
             if (!chip) continue;
@@ -337,7 +361,20 @@
         } else if (s.phase === 'answer' && s.question) {
             const q = s.question;
             cls = 'gold';
-            if (q.type === 'choice') {
+            if (q.type === 'tod') {
+                icon = '🎭';
+                title = mine ? 'Truth or Dare? You choose!' : `${them} is choosing truth or dare…`;
+                sub = `Heart #${q.id} is a Truth or Dare heart`;
+                btn = h('button', { class: 'btn btn-gold btn-sm', type: 'button', onclick: () => openQuestionSheet(liveModel()) }, mine ? 'Choose' : 'Watch');
+            } else if (q.type === 'dare') {
+                icon = '🔥';
+                title = mine ? `Your dare — heart #${q.id}` : `${them} is doing a dare…`;
+                sub = q.text;
+                btn = h('button', {
+                    class: 'btn btn-gold btn-sm', type: 'button',
+                    onclick: () => { setTab('chat'); el.input.focus(); },
+                }, isDesktop() ? 'Chat' : 'Open chat');
+            } else if (q.type === 'choice') {
                 icon = mine ? '✍️' : '👀';
                 title = mine ? `Answer heart #${q.id}` : `${them} is answering #${q.id}`;
                 sub = q.text;
@@ -455,43 +492,49 @@
     function renderPinned() {
         if (!S) return;
         const q = S.question;
-        if (!(S.status === 'playing' && S.phase === 'answer' && q && q.type === 'open')) {
+        if (!(S.status === 'playing' && S.phase === 'answer' && q && inChat(q))) {
             el.pinned.hidden = true;
             pinnedKey = '';
             return;
         }
         const mine = S.turn === ME;
-        const ready = mine && openAnswerFor(q.id);
-        const key = [S.game, q.id, S.turn, ready].join('|');
+        const dare = q.type === 'dare';
+        const ready = mine && (dare || openAnswerFor(q.id)); // a dare only needs to be done
+        const key = [S.game, q.id, q.type, S.turn, ready].join('|');
         if (key === pinnedKey) return;
         pinnedKey = key;
+        const them = P[S.turn].name;
+        const label = dare ? `🔥 Dare · heart #${q.id}` : q.tod === 'truth' ? `🙊 Truth · heart #${q.id}` : `💗 Heart #${q.id} · write it`;
+        const sub = dare
+            ? (mine ? 'Do it! Send proof or tell how it went in the chat, then tap “I did it”.' : `Make sure ${them} really does it 😏`)
+            : mine
+                ? (ready ? 'Add more if you like — then tap Finish to pass the turn.' : 'Write your answer below. You can send as many messages as you want.')
+                : `${them} is answering. Share what you think too 💭`;
         const kids = [
-            h('div', { class: 'pinned-top' }, h('span', { text: `💗 Heart #${q.id} · write it` }), avatar(S.turn, 'xs')),
+            h('div', { class: 'pinned-top' }, h('span', { text: label }), avatar(S.turn, 'xs')),
             authorTag(q),
             h('div', { class: 'pinned-q', text: q.text }),
-            h('div', {
-                class: 'pinned-sub',
-                text: mine
-                    ? (ready ? 'Add more if you like — then tap Finish to pass the turn.' : 'Write your answer below. You can send as many messages as you want.')
-                    : `${P[S.turn].name} is answering. Share what you think too 💭`,
-            }),
+            h('div', { class: 'pinned-sub', text: sub }),
         ];
         if (mine) {
-            const fin = h('button', { class: 'btn btn-gold btn-block', type: 'button', disabled: !ready }, 'Finish & pass the turn ✓');
+            const fin = h('button', { class: 'btn btn-gold btn-block', type: 'button', disabled: !ready },
+                dare ? 'I did it 🔥 — pass the turn' : 'Finish & pass the turn ✓');
             fin.addEventListener('click', () => finish(fin));
             kids.push(fin);
         }
-        el.pinned.replaceChildren(...kids);
+        el.pinned.classList.toggle('dare', dare);
+        el.pinned.replaceChildren(...kids.filter(Boolean));
         el.pinned.hidden = false;
     }
 
     function renderComposer() {
         const q = S && S.question;
-        const open = S && S.status === 'playing' && S.phase === 'answer' && q && q.type === 'open';
+        const open = S && S.status === 'playing' && S.phase === 'answer' && q && inChat(q);
         const answering = open && S.turn === ME;
         el.composer.classList.toggle('answering', !!answering);
-        el.input.placeholder = answering ? `Your answer to #${q.id}…`
-            : open ? `Your thoughts on #${q.id}…` : 'Write a message…';
+        el.input.placeholder = !open ? 'Write a message…'
+            : q.type === 'dare' ? (answering ? 'Send proof or tell how it went…' : 'Cheer them on… or doubt them 😏')
+            : answering ? `Your answer to #${q.id}…` : `Your thoughts on #${q.id}…`;
     }
 
     /** "Written by …" chip for questions from the Questions tab (null for classic ones). */
@@ -515,7 +558,7 @@
 
         if (b.classList.contains('open')) return showHistory(qid);
         if (b.classList.contains('active')) {
-            if (S.question.type === 'choice') openQuestionSheet(liveModel());
+            if (inSheet(S.question)) openQuestionSheet(liveModel());
             else setTab('chat');
             return;
         }
@@ -556,7 +599,7 @@
 
         const badge = h('span', { class: 'q-badge' }, heartIcon(false), `#${q.id}`);
         const head = h('div', { class: 'q-head' }, badge,
-            h('span', { class: 'q-type', text: q.type === 'choice' ? 'Multiple choice' : 'Write it' }),
+            h('span', { class: 'q-type', text: todLabel(q) || (q.type === 'choice' ? 'Multiple choice' : 'Write it') }),
             h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Close', 'data-close': true, text: '✕' }));
 
         const byLine = h('div', { class: 'q-by' }, avatar(m.by, 'sm'),
@@ -569,8 +612,29 @@
         const customIdx = q.options.length; // the extra "Custom" option always comes last
         const isCustom = m.choice === customIdx;
         const customReady = () => !isCustom || !!(m.customText || '').trim();
+        const dots = () => h('span', { class: 'dots' }, h('i'), h('i'), h('i'));
 
-        if (q.type === 'choice') {
+        if (q.type === 'tod') {
+            // step 1 of a Truth-or-Dare heart: the picker chooses
+            const card = (pick, emoji, title, sub) => {
+                const b = h('button', { class: `tod-card ${pick}`, type: 'button', disabled: !canAnswer },
+                    h('span', { class: 'tod-emoji', text: emoji }), h('b', { text: title }), h('small', { text: sub }));
+                if (canAnswer) {
+                    b.addEventListener('click', async () => {
+                        el.qSheet.querySelectorAll('.tod-card').forEach((c) => { c.disabled = true; });
+                        b.classList.add('picked');
+                        if (!(await act('tod', { pick }))) renderSheet();
+                    });
+                }
+                return b;
+            };
+            parts.push(h('div', { class: 'tod-grid' },
+                card('truth', '🙊', 'Truth', 'Answer a question honestly'),
+                card('dare', '🔥', 'Dare', 'Do something brave')));
+            parts.push(live && !mine
+                ? h('div', { class: 'q-note' }, dots(), `${who} is choosing…`)
+                : h('div', { class: 'q-note', text: 'Choose wisely 😏' }));
+        } else if (q.type === 'choice') {
             const option = (i, text, sub) => {
                 const chosen = m.choice === i;
                 let cls = `opt${i === customIdx ? ' custom' : ''}`;
@@ -609,7 +673,6 @@
             }
 
             let note = null;
-            const dots = () => h('span', { class: 'dots' }, h('i'), h('i'), h('i'));
             if (live && !mine) {
                 note = m.choice == null ? h('div', { class: 'q-note' }, dots(), `${who} is choosing…`)
                     : isCustom ? h('div', { class: 'q-note' }, dots(), `${who} is writing their own answer ✍️`)
@@ -651,7 +714,7 @@
         parts.push(actions);
 
         const typingCustom = document.activeElement && document.activeElement.id === 'customInput';
-        el.qSheet.replaceChildren(...parts);
+        el.qSheet.replaceChildren(...parts.filter(Boolean));
         if (customInput && (typingCustom || m.focusCustom)) {
             m.focusCustom = false;
             customInput.focus();
@@ -704,6 +767,13 @@
                 h('div', { class: 'qcard-top' }, avatar(m.by, 'xs'), `${NAME(m.by)} opened heart`, h('b', { text: `#${m.q}` })),
                 h('p', { class: 'qcard-text', text: m.body }));
         }
+        if (m.kind === 'truth' || m.kind === 'dare') {
+            const dare = m.kind === 'dare';
+            return h('div', { class: `qcard tod ${m.kind}` },
+                h('div', { class: 'qcard-top' }, avatar(m.by, 'xs'), `${NAME(m.by)} chose`,
+                    h('b', { text: dare ? 'DARE 🔥' : 'TRUTH 🙊' }), h('span', { text: `· #${m.q}` })),
+                h('p', { class: 'qcard-text', text: m.body }));
+        }
         return renderBubble(m);
     }
 
@@ -728,16 +798,23 @@
         const stick = initial || nearBottom();
         let fromThem = 0;
         const empty = el.messages.querySelector('.messages-empty');
+        const batch = document.createDocumentFragment(); // one DOM insert instead of hundreds
         for (const m of list) {
             if (m.id <= lastMsg) continue;
             lastMsg = m.id;
             msgs.push(m);
             if (empty) empty.remove();
             const day = dayLabel(m.at);
-            if (day !== lastDay) { lastDay = day; el.messages.append(h('div', { class: 'day', text: day })); }
-            el.messages.append(renderMessage(m));
-            if (!initial && m.by === THEM && m.kind !== 'question') fromThem++;
+            if (day !== lastDay) { lastDay = day; batch.append(h('div', { class: 'day', text: day })); }
+            batch.append(renderMessage(m));
+            if (!initial && m.by === THEM && !['question', 'truth', 'dare'].includes(m.kind)) fromThem++;
         }
+        if (initial) {
+            // don't animate a whole chat history in at once
+            el.messages.classList.add('no-anim');
+            requestAnimationFrame(() => requestAnimationFrame(() => el.messages.classList.remove('no-anim')));
+        }
+        el.messages.append(batch);
         if (msgs.length > 600) msgs.splice(0, msgs.length - 600);
 
         if (stick || list.some((m) => m.by === ME)) scrollChatToBottom(!initial);
@@ -747,7 +824,7 @@
             if (document.hidden) flashTitle(`💬 ${P[THEM].name} wrote`);
         }
         renderPinned();
-        if (sheetModel && sheetModel.mode === 'live' && sheetModel.q.type === 'open') renderSheet();
+        if (sheetModel && sheetModel.mode === 'live' && inChat(sheetModel.q)) renderSheet();
     }
 
     /** Scroll to and glow the final-answer bubble for heart #qid. */
