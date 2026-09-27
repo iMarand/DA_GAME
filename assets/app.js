@@ -207,26 +207,31 @@
 
         const prevQ = prev.question ? prev.question.id : null;
 
-        // A heart was opened — or a Truth-or-Dare heart just became its truth / dare
+        // A heart was picked — or a Truth-or-Dare heart just became its truth / dare.
+        // One player picks the heart, the other answers it: during 'answer', turn = the answerer.
         const decided = !!curQ && curQ === prevQ && prev.question.tod !== cur.question.tod;
         if (curQ && (curQ !== prevQ || decided)) {
-            const mine = cur.turn === ME;
+            const answering = cur.turn === ME;
             const q = cur.question;
-            if (!mine) {
-                const chose = q.tod === 'dare' ? 'DARE 🔥' : 'TRUTH 🙊';
-                if (decided) notify(`${P[THEM].name} chose ${chose}`, 'open');
+            const them = P[THEM].name;
+            const chose = q.tod === 'dare' ? 'DARE 🔥' : 'TRUTH 🙊';
+            if (answering && !decided) {
+                // my partner picked a heart for me
+                notify(q.type === 'tod' ? `${them} picked a Truth or Dare heart for you 🎭 — choose!`
+                    : `${them} picked heart #${curQ} for you 💗 — your turn to answer`, 'turn');
+            } else if (!answering) {
+                if (decided) notify(`${them} chose ${chose}`, 'open');
                 // (if they chose within a second we never saw the undecided heart)
-                else if (q.tod) notify(`${P[THEM].name} opened Truth or Dare #${curQ} and chose ${chose}`, 'open');
-                else notify(q.type === 'tod' ? `${P[THEM].name} found a Truth or Dare heart 🎭` : `${P[THEM].name} opened heart #${curQ} 💗`, 'open');
+                else if (q.tod) notify(`${them} chose ${chose} on heart #${curQ}`, 'open');
             }
             if (inSheet(q)) {
                 openQuestionSheet(liveModel());
             } else {
                 closeSheets();
                 setTab('chat');
-                if (mine) setTimeout(() => el.input.focus(), 350);
-                else if (q.type === 'dare') toast(`Watch ${P[THEM].name} do the dare in the chat 👀`, 'love');
-                else toast(`#${curQ} is a write-it question — the answer is coming in the chat 💬`, 'love');
+                if (answering) setTimeout(() => el.input.focus(), 350);
+                else if (q.type === 'dare') toast(`Watch ${them} do the dare in the chat 👀`, 'love');
+                else toast(`${them} is answering #${curQ} in the chat 💬`, 'love');
             }
         }
 
@@ -238,7 +243,7 @@
             if (a.by === ME) {
                 burst();
                 if (sheetModel && sheetModel.mode === 'live') closeSheets();
-                if (cur.status === 'playing') toast(`Sent 💗 Now it's ${P[THEM].name}'s turn`, 'love');
+                // (the "your turn to pick" toast follows right after)
             } else if (a.q.type === 'choice' && a.custom != null) {
                 // their own words: read them in the chat
                 closeSheets();
@@ -261,7 +266,7 @@
         const myPick = (s) => s && s.status === 'playing' && s.phase === 'pick' && s.turn === ME;
         if (myPick(cur) && !myPick(prev)) {
             setTimeout(() => {
-                notify('Your turn! Pick a heart 💗', 'turn', !isDesktop() && app.dataset.tab !== 'game'
+                notify(`Your turn! Pick a heart for ${P[THEM].name} 💗`, 'turn', !isDesktop() && app.dataset.tab !== 'game'
                     ? { label: 'Go', fn: () => setTab('game') } : null);
                 if (userTapped() && navigator.vibrate) navigator.vibrate([60, 60, 60]);
             }, diceBusy ? 2600 : 250);
@@ -352,10 +357,10 @@
 
         if (s.phase === 'pick') {
             if (mine) {
-                icon = '💗'; title = 'Your turn!'; sub = 'Pick any heart to open a question.'; cls = 'mine';
+                icon = '💗'; title = 'Your turn to pick!'; sub = `Choose a heart — ${them} will have to answer it.`; cls = 'mine';
             } else {
-                icon = '💭'; title = `${them} is picking…`;
-                sub = presenceOf(THEM).online ? 'The question will show up here as soon as a heart opens.'
+                icon = '💭'; title = `${them} is picking a heart for you…`;
+                sub = presenceOf(THEM).online ? 'Get ready to answer 😏'
                     : `${them} is offline right now — you'll be notified.`;
             }
         } else if (s.phase === 'answer' && s.question) {
@@ -564,8 +569,10 @@
         }
         if (S.status === 'lobby') return toast('Roll the dice first 🎲');
         if (S.status !== 'playing') return;
-        if (S.turn !== ME) return toast(`It's ${P[S.turn].name}'s turn 💭`);
-        if (S.phase !== 'pick') return toast(`Finish heart #${S.question.id} first`);
+        if (S.phase !== 'pick') {
+            return toast(S.turn === ME ? `Answer heart #${S.question.id} first` : `${P[S.turn].name} is answering #${S.question.id} 💭`);
+        }
+        if (S.turn !== ME) return toast(`${P[S.turn].name} is picking a heart for you 💭`);
 
         b.classList.add('opening');
         act('pick', { q: qid }).then((r) => { if (!r) b.classList.remove('opening'); });
@@ -603,7 +610,9 @@
             h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Close', 'data-close': true, text: '✕' }));
 
         const byLine = h('div', { class: 'q-by' }, avatar(m.by, 'sm'),
-            m.mode === 'history' ? `Answered by ${mine ? 'you' : who}` : mine ? 'You opened this heart' : `${who} opened this heart`);
+            // m.by is always the one answering; the other one picked the heart
+            m.mode === 'history' ? `Answered by ${mine ? 'you' : who}`
+                : mine ? `${P[THEM].name} picked this heart for you` : `You picked this heart for ${who}`);
 
         const parts = [h('div', { class: 'sheet-grab' }), head, byLine, authorTag(q), h('h2', { class: 'q-text', id: 'qText', text: q.text })];
 
@@ -764,7 +773,10 @@
         if (m.kind === 'system') return h('div', { class: 'sys', text: m.body });
         if (m.kind === 'question') {
             return h('div', { class: 'qcard' },
-                h('div', { class: 'qcard-top' }, avatar(m.by, 'xs'), `${NAME(m.by)} opened heart`, h('b', { text: `#${m.q}` })),
+                h('div', { class: 'qcard-top' }, avatar(m.by, 'xs'),
+                    m.by === ME ? 'You picked heart' : `${P[m.by] ? P[m.by].name : 'Someone'} picked heart`,
+                    h('b', { text: `#${m.q}` }),
+                    m.by === ME ? `for ${P[THEM].name}` : 'for you'),
                 h('p', { class: 'qcard-text', text: m.body }));
         }
         if (m.kind === 'truth' || m.kind === 'dare') {

@@ -85,9 +85,9 @@ Even safer: set `data_dir` in `config.php` to a folder outside the web root, suc
 
 1. Open the site on both phones and enter your codes. Each phone stays logged in for a year.
 2. When you're both online, either of you taps **Roll the dice** to decide who picks first.
-3. On your turn, tap a heart:
-   - **Multiple choice:** you tap your answer. The other person sees your selection live. Tap **Finish** to pass the turn.
-   - **Write it:** the question is pinned in the chat. Write your answer there. The other person can reply with their thoughts. Tap **Finish** to pass the turn.
+3. **You pick, your partner answers.** On your turn you tap a heart for your partner, and they answer it. Then they pick the next heart for you, and so on. For a Truth-or-Dare heart, the person answering chooses Truth or Dare. How the answering works:
+   - **Multiple choice:** the person answering taps their answer, and the picker sees it live. Tap **Finish** when done.
+   - **Write it:** the question is pinned in the chat. The person answering writes there, and the picker can reply with their thoughts. Tap **Finish** when done.
 4. **Questions tab:** each of you can write your own questions, either multiple choice with your suggested answers or write-it. Your partner's questions stay hidden until they come up in a game. Under **Play them** you can start a new game with **Mix & shuffle** (your questions plus classics, 100 hearts), **Only ours**, or **Classic 100**. Your questions are saved, so they're kept for every future game.
 5. Opened hearts take the answerer's color. Tap an opened heart to read that answer again.
 6. The **⋯** menu has sounds on/off, **Start a new game** (opens the Play options), and **Log out**.

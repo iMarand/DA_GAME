@@ -97,14 +97,18 @@ try {
             tx(function () use ($me, $in) {
                 $s = state_row();
                 if ($s['status'] !== 'playing') fail('Roll the dice first 🎲');
+                if ($s['phase'] !== 'pick') fail('Heart #' . $s['question'] . ' is still being answered.');
                 if ($s['turn'] !== $me) fail("It's " . player_name($s['turn']) . "'s turn to pick.");
-                if ($s['phase'] !== 'pick') fail('Finish heart #' . $s['question'] . ' first.');
                 $qid = (int) ($in['q'] ?? 0);
                 if (!question($qid)) fail('That heart does not exist.');
                 if (row('SELECT 1 FROM answers WHERE game = ? AND question = ?', [$s['game'], $qid])) {
                     fail('That heart is already open.');
                 }
-                q("UPDATE state SET phase = 'answer', question = ?, choice = NULL, tod = NULL WHERE id = 1", [$qid]);
+                // You pick the heart, your partner answers it: the turn passes to them.
+                q(
+                    "UPDATE state SET phase = 'answer', question = ?, choice = NULL, tod = NULL, turn = ? WHERE id = 1",
+                    [$qid, other_player($me)]
+                );
                 $pq = public_question($qid);
                 add_message((int) $s['game'], $me, 'question', $qid, $pq['type'] === 'tod' ? '🎭 Truth or Dare?' : $pq['text']);
                 bump();
@@ -181,9 +185,10 @@ try {
                     q("UPDATE state SET status = 'done', turn = NULL, phase = NULL, question = NULL, choice = NULL, tod = NULL WHERE id = 1");
                     add_message($game, null, 'system', null, '💞 All hearts are open. What a journey!');
                 } else {
+                    // Whoever just answered picks the next heart for the other.
                     q(
                         "UPDATE state SET turn = ?, phase = 'pick', question = NULL, choice = NULL, tod = NULL WHERE id = 1",
-                        [other_player($me)]
+                        [$me]
                     );
                 }
                 bump();
